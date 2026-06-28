@@ -12,19 +12,6 @@ import os
 
 from protocol import DISCOVERY_PORT, CONTROL_PORT
 
-_RULES = [
-    {
-        "name": "CrossDeviceHID-UDP-Discovery",
-        "protocol": "UDP",
-        "port": DISCOVERY_PORT,
-    },
-    {
-        "name": "CrossDeviceHID-TCP-Control",
-        "protocol": "TCP",
-        "port": CONTROL_PORT,
-    },
-]
-
 
 def _rule_exists(rule_name: str) -> bool:
     """Return True if a firewall rule with this exact name already exists."""
@@ -40,10 +27,10 @@ def _rule_exists(rule_name: str) -> bool:
         return False
 
 
-def _build_netsh_commands() -> str:
+def _build_netsh_commands(rules: list[dict]) -> str:
     """Build a semicolon-joined string of netsh commands to add missing rules."""
     cmds = []
-    for rule in _RULES:
+    for rule in rules:
         if not _rule_exists(rule["name"]):
             cmds.append(
                 f'netsh advfirewall firewall add rule '
@@ -56,27 +43,37 @@ def _build_netsh_commands() -> str:
     return " & ".join(cmds)
 
 
-def ensure_firewall_rules() -> bool:
+def ensure_firewall_rules(control_port: int = CONTROL_PORT, discovery_port: int = DISCOVERY_PORT) -> bool:
     """
     Ensure Windows Firewall allows the app's ports.
 
     - If all rules already exist: returns True immediately (no UAC prompt).
     - If any rule is missing: triggers a single UAC-elevated cmd.exe to add
       them, waits for completion, then returns True/False based on success.
-
-    The main process is never elevated; only a short-lived cmd.exe subprocess
-    runs with admin rights.
     """
+    rules = [
+        {
+            "name": f"CrossDeviceHID-UDP-Discovery-{discovery_port}",
+            "protocol": "UDP",
+            "port": discovery_port,
+        },
+        {
+            "name": f"CrossDeviceHID-TCP-Control-{control_port}",
+            "protocol": "TCP",
+            "port": control_port,
+        },
+    ]
+
     # Fast-path: all rules exist already
-    if all(_rule_exists(r["name"]) for r in _RULES):
+    if all(_rule_exists(r["name"]) for r in rules):
         print("[Firewall] Rules already present — no action needed.")
         return True
 
-    cmds = _build_netsh_commands()
+    cmds = _build_netsh_commands(rules)
     if not cmds:
         return True  # nothing to add
 
-    print("[Firewall] Missing firewall rules — requesting elevation to add them…")
+    print(f"[Firewall] Missing firewall rules for ports UDP:{discovery_port}/TCP:{control_port} — requesting elevation…")
 
     try:
         # ShellExecuteW with "runas" triggers a UAC prompt.

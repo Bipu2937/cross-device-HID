@@ -37,8 +37,9 @@ class DiscoveryService:
     ANNOUNCE_INTERVAL = 2.0
     PEER_TTL = 7.0  # drop peer if not seen for this many seconds
 
-    def __init__(self, control_port: int, on_device_found=None, on_device_lost=None):
+    def __init__(self, control_port: int, discovery_port: int = DISCOVERY_PORT, on_device_found=None, on_device_lost=None):
         self.control_port = control_port
+        self.discovery_port = discovery_port
         self.on_device_found = on_device_found or (lambda d: None)
         self.on_device_lost = on_device_lost or (lambda d: None)
 
@@ -65,6 +66,19 @@ class DiscoveryService:
         with self._lock:
             return list(self._peers.values())
 
+    def broadcast_now(self):
+        """Immediately broadcast an announcement packet (manual refresh/scan)."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.sendto(self._make_announce(), ("<broadcast>", self.discovery_port))
+            print(f"[Discovery] Manual broadcast sent to port {self.discovery_port}")
+        except Exception as e:
+            print(f"[Discovery] Manual broadcast failed: {e}")
+        finally:
+            sock.close()
+
     # ------------------------------------------------------------------
     # Internal loops
     # ------------------------------------------------------------------
@@ -86,7 +100,7 @@ class DiscoveryService:
         try:
             while not self._stop.is_set():
                 try:
-                    sock.sendto(self._make_announce(), ("<broadcast>", DISCOVERY_PORT))
+                    sock.sendto(self._make_announce(), ("<broadcast>", self.discovery_port))
                 except Exception:
                     pass
                 self._stop.wait(self.ANNOUNCE_INTERVAL)
@@ -98,7 +112,7 @@ class DiscoveryService:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.settimeout(1.0)
         try:
-            sock.bind(("", DISCOVERY_PORT))
+            sock.bind(("", self.discovery_port))
         except OSError as e:
             print(f"[Discovery] bind failed: {e}")
             return
