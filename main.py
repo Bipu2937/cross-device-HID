@@ -120,16 +120,23 @@ def main():
 
     def quit_app():
         print("[Main] Quitting")
-        # Stop client/discovery/server
-        client.stop()
-        discovery.stop()
-        server.stop()
-        # Close UIs
-        if tray:
-            tray.stop()
-        if dashboard:
-            dashboard.stop()
-        sys.exit(0)
+        # Quit may be invoked from the tray's background thread. sys.exit() only
+        # unwinds the calling thread, leaving the Tk mainloop (and the process)
+        # alive. Best-effort-stop the components to release the input hooks and
+        # sockets, then force the whole process to exit regardless of thread.
+        for name, stop_fn in (
+            ("client", client.stop),
+            ("discovery", discovery.stop),
+            ("server", server.stop),
+            ("tray", tray.stop if tray else None),
+        ):
+            if stop_fn is None:
+                continue
+            try:
+                stop_fn()
+            except Exception as e:
+                print(f"[Main] error stopping {name}: {e}")
+        os._exit(0)
 
     # Dashboard-specific callbacks
     def on_manual_scan():
