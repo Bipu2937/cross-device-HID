@@ -29,6 +29,8 @@ class InputClient:
         self._mouse_listener = None
         self._keyboard_listener = None
         self.on_status_change = on_status_change or (lambda status: None)
+        self._ctrl_pressed = False
+        self._alt_pressed = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -121,17 +123,21 @@ class InputClient:
 
     def _start_listeners(self):
         self._capturing = True
+        self._ctrl_pressed = False
+        self._alt_pressed = False
 
         self._mouse_listener = mouse.Listener(
             on_move=self._on_move,
             on_click=self._on_click,
             on_scroll=self._on_scroll,
+            suppress=True,
         )
         self._mouse_listener.start()
 
         self._keyboard_listener = keyboard.Listener(
             on_press=self._on_key_press,
             on_release=self._on_key_release,
+            suppress=True,
         )
         self._keyboard_listener.start()
 
@@ -159,10 +165,33 @@ class InputClient:
         self._send({"type": "mouse_scroll", "x": x, "y": y, "dx": dx, "dy": dy})
 
     def _on_key_press(self, key):
-        self._send({"type": "key", "key": self._key_str(key), "pressed": True})
+        key_str = self._key_str(key)
+        
+        # Track modifier keys
+        if "ctrl" in key_str:
+            self._ctrl_pressed = True
+        elif "alt" in key_str:
+            self._alt_pressed = True
+            
+        # Escape sequence: Ctrl + Alt + Escape to regain control
+        if key == keyboard.Key.esc and self._ctrl_pressed and self._alt_pressed:
+            print("[InputClient] Escape combo pressed. Restoring local control...")
+            self._ctrl_pressed = False
+            self._alt_pressed = False
+            # Call disconnect asynchronously to avoid blocking listener thread
+            threading.Thread(target=self.disconnect, daemon=True).start()
+            return False  # Stops the keyboard listener
+            
+        self._send({"type": "key", "key": key_str, "pressed": True})
 
     def _on_key_release(self, key):
-        self._send({"type": "key", "key": self._key_str(key), "pressed": False})
+        key_str = self._key_str(key)
+        if "ctrl" in key_str:
+            self._ctrl_pressed = False
+        elif "alt" in key_str:
+            self._alt_pressed = False
+            
+        self._send({"type": "key", "key": key_str, "pressed": False})
 
     @staticmethod
     def _key_str(key) -> str:

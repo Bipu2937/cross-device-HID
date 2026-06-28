@@ -138,6 +138,10 @@ def main():
     def on_save_settings(ctrl: int, disc: int) -> bool:
         return save_config(ctrl, disc)
 
+    def disconnect_remote():
+        print("[Main] Terminating incoming controller session...")
+        server.disconnect_active_client()
+
     # ------------------------------------------------------------------ #
     # 4. GUI & System-tray UI Setup                                        #
     # ------------------------------------------------------------------ #
@@ -151,6 +155,7 @@ def main():
         on_quit=quit_app,
         on_manual_scan=on_manual_scan,
         on_save_settings=on_save_settings,
+        on_disconnect_remote=disconnect_remote,
     )
 
     tray = TrayApp(

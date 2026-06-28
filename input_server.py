@@ -45,6 +45,8 @@ class InputServer:
         self._stop = threading.Event()
         self._server_sock = None
         self.on_status_change = on_status_change or (lambda status: None)
+        self._active_conn = None
+        self._server_lock = threading.Lock()
 
     def start(self):
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -57,11 +59,23 @@ class InputServer:
 
     def stop(self):
         self._stop.set()
+        self.disconnect_active_client()
         if self._server_sock:
             try:
                 self._server_sock.close()
             except Exception:
                 pass
+
+    def disconnect_active_client(self):
+        """Forcefully disconnect the currently connected remote controller."""
+        with self._server_lock:
+            if self._active_conn:
+                try:
+                    self._active_conn.close()
+                    print("[InputServer] Force disconnected active remote controller.")
+                except Exception as e:
+                    print(f"[InputServer] Error disconnecting client: {e}")
+                self._active_conn = None
 
     def _accept_loop(self):
         while not self._stop.is_set():
@@ -80,6 +94,8 @@ class InputServer:
                 break
 
     def _handle_client(self, conn: socket.socket, addr):
+        with self._server_lock:
+            self._active_conn = conn
         conn.settimeout(5.0)
         buf = ""
         self.on_status_change(f"controlled_by:{addr[0]}")
@@ -101,6 +117,9 @@ class InputServer:
             print(f"[InputServer] Client {addr} error: {e}")
         finally:
             conn.close()
+            with self._server_lock:
+                if self._active_conn == conn:
+                    self._active_conn = None
             print(f"[InputServer] Controller {addr} disconnected")
             self.on_status_change("idle")
 

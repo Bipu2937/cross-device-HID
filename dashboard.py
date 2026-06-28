@@ -1,7 +1,8 @@
 """
 Tkinter-based Dashboard UI for Cross-Device HID.
 Provides setup instructions, network details, connection status,
-manual IP connection, port configuration, and manual peer scanning.
+manual IP connection, port configuration, manual peer scanning,
+and remote control disconnect warnings/controls.
 """
 import sys
 import tkinter as tk
@@ -14,11 +15,12 @@ class DashboardApp:
         hostname: str,
         control_port: int,
         discovery_port: int,
-        on_connect,          # Callable[[dict], None]
-        on_disconnect,       # Callable[[], None]
-        on_quit,             # Callable[[], None]
-        on_manual_scan,      # Callable[[], None]
-        on_save_settings,    # Callable[[int, int], bool] (returns True if saved successfully)
+        on_connect,                  # Callable[[dict], None]
+        on_disconnect,               # Callable[[], None]
+        on_quit,                     # Callable[[], None]
+        on_manual_scan,              # Callable[[], None]
+        on_save_settings,            # Callable[[int, int], bool]
+        on_disconnect_remote,        # Callable[[], None] (disconnect incoming controller)
     ):
         self.local_ip = local_ip
         self.hostname = hostname
@@ -29,6 +31,7 @@ class DashboardApp:
         self._on_quit = on_quit
         self._on_manual_scan = on_manual_scan
         self._on_save_settings = on_save_settings
+        self._on_disconnect_remote_cb = on_disconnect_remote
 
         self._peers: list[dict] = []
         self._status = "Idle — Ready to connect or accept connections"
@@ -38,7 +41,7 @@ class DashboardApp:
         # Create root window
         self.root = tk.Tk()
         self.root.title("Cross-Device HID Dashboard")
-        self.root.geometry("860x560")
+        self.root.geometry("860x590")
         self.root.resizable(False, False)
 
         # Style configuration
@@ -56,11 +59,48 @@ class DashboardApp:
         # Handle window closing (redirect to hide to system tray)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
 
+        # Bind local Escape key to disconnect incoming controller
+        self.root.bind("<Escape>", self._handle_escape_press)
+
         self._build_ui()
 
     def _build_ui(self):
+        # 0. Active Control Warning Frame (Hidden by default, packed at top when controlled)
+        self.warning_frame = tk.Frame(self.root, bg=self.accent_red, pady=8)
+        
+        self.warning_lbl = tk.Label(
+            self.warning_frame,
+            text="WARNING: This PC is currently being controlled!",
+            font=("Segoe UI", 11, "bold"),
+            fg="white",
+            bg=self.accent_red,
+            anchor="w",
+        )
+        self.warning_lbl.pack(side=tk.LEFT, padx=20, fill=tk.X, expand=True)
+
+        self.warning_btn = tk.Button(
+            self.warning_frame,
+            text="Disconnect Controller (ESC)",
+            font=("Segoe UI", 9, "bold"),
+            bg="white",
+            fg=self.accent_red,
+            activebackground="#f8f9fa",
+            activeforeground=self.accent_red,
+            relief="flat",
+            bd=0,
+            padx=15,
+            pady=3,
+            cursor="hand2",
+            command=self._on_disconnect_remote,
+        )
+        self.warning_btn.pack(side=tk.RIGHT, padx=20)
+
+        # Master Container (holds everything else, so warning_frame can be packed above it)
+        self.main_container = tk.Frame(self.root, bg=self.bg_color)
+        self.main_container.pack(fill=tk.BOTH, expand=True)
+
         # Header banner
-        header_frame = tk.Frame(self.root, bg=self.bg_color, pady=12)
+        header_frame = tk.Frame(self.main_container, bg=self.bg_color, pady=12)
         header_frame.pack(fill=tk.X, padx=20)
 
         title_label = tk.Label(
@@ -74,7 +114,7 @@ class DashboardApp:
 
         subtitle_label = tk.Label(
             header_frame,
-            text="Control another computer's mouse and keyboard seamlessly over the local network.",
+            text="Control another computer's mouse and keyboard seamlessly over the local network. Escape using Ctrl+Alt+Escape.",
             font=("Segoe UI", 9),
             fg=self.text_secondary,
             bg=self.bg_color,
@@ -82,7 +122,7 @@ class DashboardApp:
         subtitle_label.pack(anchor="w", pady=(2, 0))
 
         # Main Content Layout (Two Columns)
-        main_content = tk.Frame(self.root, bg=self.bg_color)
+        main_content = tk.Frame(self.main_container, bg=self.bg_color)
         main_content.pack(fill=tk.BOTH, expand=True, padx=20, pady=(5, 10))
 
         # Left Column: Config cards
@@ -255,7 +295,7 @@ class DashboardApp:
         self._refresh_peers_ui()
 
         # Status Bar & Actions Footer
-        footer = tk.Frame(self.root, bg=self.card_bg, height=45)
+        footer = tk.Frame(self.main_container, bg=self.card_bg, height=45)
         footer.pack(fill=tk.X, side=tk.BOTTOM)
 
         # Status Label
@@ -427,6 +467,15 @@ class DashboardApp:
         if self._on_save_settings(control, discovery):
             messagebox.showinfo("Settings Saved", "Port configurations saved successfully.\nPlease restart the application to apply the changes.")
 
+    def _handle_escape_press(self, event):
+        if self._is_controlled:
+            print("[Dashboard] Escape pressed on controlled PC. Terminating session.")
+            self._on_disconnect_remote()
+
+    def _on_disconnect_remote(self):
+        if self._on_disconnect_remote_cb:
+            self._on_disconnect_remote_cb()
+
     # ------------------------------------------------------------------
     # Public Thread-Safe API
     # ------------------------------------------------------------------
@@ -450,9 +499,12 @@ class DashboardApp:
                     ip = status.split(":", 1)[1]
                     self._active_ip = ip
                     self._is_controlled = False
-                    self._status = f"Controlling device @ {ip}"
+                    self._status = f"Controlling device @ {ip} (Ctrl+Alt+Esc to stop)"
                 self.status_icon.configure(fg=self.accent_green)
                 self.status_lbl.configure(text=self._status, fg=self.accent_green)
+
+                # Hide warning frame if active
+                self.warning_frame.pack_forget()
 
                 # Update manual card connect button to act as disconnect
                 self.manual_connect_btn.configure(
@@ -472,12 +524,22 @@ class DashboardApp:
                 self.status_icon.configure(fg=self.accent_red)
                 self.status_lbl.configure(text=self._status, fg=self.accent_red)
 
+                # Update warning banner text and display banner at very top
+                self.warning_lbl.configure(text=f"WARNING: PC is being controlled by {ip}!")
+                self.warning_frame.pack(fill=tk.X, side=tk.TOP, before=self.main_container)
+                
+                # Restore window to visible and bring to front so the user is immediately aware
+                self.show()
+
             elif "disconnected" in status_lower or "idle" in status_lower:
                 self._active_ip = None
                 self._is_controlled = False
                 self._status = "Idle — Ready to connect or accept connections"
                 self.status_icon.configure(fg=self.text_secondary)
                 self.status_lbl.configure(text=self._status, fg=self.text_primary)
+
+                # Hide warning frame
+                self.warning_frame.pack_forget()
 
                 # Reset manual card connect button to connect
                 self.manual_connect_btn.configure(
@@ -494,6 +556,9 @@ class DashboardApp:
                 self._status = "Connection lost — retrying…"
                 self.status_icon.configure(fg=self.accent_red)
                 self.status_lbl.configure(text=self._status, fg=self.accent_red)
+                
+                # Hide warning frame
+                self.warning_frame.pack_forget()
             else:
                 self.status_lbl.configure(text=status, fg=self.text_primary)
 
