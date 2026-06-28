@@ -150,8 +150,9 @@ class InputClient:
         self._capturing = True
         self._ctrl_pressed = False
         self._alt_pressed = False
-        
-        self._mouse_ctrl = mouse.Controller()
+        if hasattr(self, '_center_x'):
+            del self._center_x
+            del self._center_y
 
         self._mouse_listener = mouse.Listener(
             on_move=self._on_move,
@@ -178,11 +179,14 @@ class InputClient:
 
     def _on_move(self, x, y):
         # We use relative mouse movements to prevent the cursor from getting stuck.
-        # Since suppress=True freezes the actual cursor, x and y are the hardware delta applied 
-        # to the constant cursor position.
-        cx, cy = self._mouse_ctrl.position
-        dx = x - cx
-        dy = y - cy
+        # We use the first reported position as the base center to avoid Controller() issues.
+        if not hasattr(self, '_center_x'):
+            self._center_x = x
+            self._center_y = y
+            return
+        
+        dx = x - self._center_x
+        dy = y - self._center_y
         if dx != 0 or dy != 0:
             self._send({"type": "mouse_move_rel", "dx": dx, "dy": dy})
 
