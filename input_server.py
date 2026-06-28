@@ -9,7 +9,7 @@ import threading
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
 
-from protocol import CONTROL_PORT, BUFFER_SIZE
+from protocol import CONTROL_PORT, BUFFER_SIZE, encode
 
 # Map string names -> pynput Button
 _BUTTON_MAP = {
@@ -70,6 +70,12 @@ class InputServer:
         """Forcefully disconnect the currently connected remote controller."""
         with self._server_lock:
             if self._active_conn:
+                # Tell the controller this disconnect is intentional so it does
+                # NOT auto-reconnect and grab control again.
+                try:
+                    self._active_conn.sendall(encode({"type": "disconnect"}))
+                except Exception:
+                    pass
                 try:
                     self._active_conn.close()
                     print("[InputServer] Force disconnected active remote controller.")
