@@ -12,6 +12,8 @@ from pynput import mouse, keyboard
 from protocol import CONTROL_PORT, encode
 
 
+import queue
+
 class InputClient:
     """
     Captures all local mouse and keyboard events and forwards them to
@@ -31,6 +33,8 @@ class InputClient:
         self.on_status_change = on_status_change or (lambda status: None)
         self._ctrl_pressed = False
         self._alt_pressed = False
+        self._send_queue = queue.Queue()
+        self._sender_thread = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -78,11 +82,13 @@ class InputClient:
         self._close_socket()
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             s.settimeout(3.0)
             s.connect((ip, port))
             s.settimeout(None)
             with self._lock:
                 self._sock = s
+            self._start_sender_thread()
             self.on_status_change(f"connected:{ip}")
             print(f"[InputClient] Connected to {ip}:{port}")
         except Exception as e:
@@ -98,28 +104,49 @@ class InputClient:
                     pass
                 self._sock = None
 
-    def _send(self, msg: dict):
-        with self._lock:
-            sock = self._sock
-        if sock is None:
-            return
-        try:
-            sock.sendall(encode(msg))
-        except Exception as e:
-            print(f"[InputClient] send error: {e}")
-            self._close_socket()
-            self._stop_listeners()
-            self._capturing = False
-            self.on_status_change("error")
-            # Try to reconnect in background
+    def _start_sender_thread(self):
+        # Clear queue
+        while not self._send_queue.empty():
+            try:
+                self._send_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
+        self._sender_thread.start()
+
+    def _sender_loop(self):
+        while True:
+            msg = self._send_queue.get()
+            if msg is None:  # Sentinel to stop
+                break
+            
             with self._lock:
-                target = self._target
-            if target:
-                threading.Thread(
-                    target=self._reconnect,
-                    args=target,
-                    daemon=True,
-                ).start()
+                sock = self._sock
+            if sock is None:
+                continue
+                
+            try:
+                sock.sendall(encode(msg))
+            except Exception as e:
+                print(f"[InputClient] send error: {e}")
+                self._close_socket()
+                self._stop_listeners()
+                self._capturing = False
+                self.on_status_change("error")
+                # Try to reconnect in background
+                with self._lock:
+                    target = self._target
+                if target:
+                    threading.Thread(
+                        target=self._reconnect,
+                        args=target,
+                        daemon=True,
+                    ).start()
+                break # exit thread on error, reconnect loop will spawn a new one
+
+    def _send(self, msg: dict):
+        # Non-blocking push to queue, extremely fast, prevents Windows hook timeouts
+        self._send_queue.put_nowait(msg)
 
     def _reconnect(self, ip: str, port: int):
         time.sleep(self.RECONNECT_DELAY)
