@@ -5,6 +5,7 @@ Captures local mouse/keyboard events and streams them to the target device.
 import json
 import socket
 import threading
+import time
 
 from pynput import mouse, keyboard
 from pynput.mouse import Controller as MouseController
@@ -20,6 +21,8 @@ class InputClient:
     the currently-selected remote device.  Call connect() / disconnect()
     to switch targets.
     """
+
+    RECONNECT_DELAY = 3.0
 
     def __init__(self, on_status_change=None):
         self._sock: socket.socket | None = None
@@ -50,9 +53,12 @@ class InputClient:
             if not self._capturing:
                 self._start_listeners()
         else:
-            # Connection failed — give up and leave control on the local PC.
-            with self._lock:
-                self._target = None
+            # Failed to connect, but user asked to connect, so try in background
+            threading.Thread(
+                target=self._reconnect,
+                args=(ip, port),
+                daemon=True,
+            ).start()
 
     def disconnect(self):
         """Stop forwarding and release listeners to return control to local PC."""
@@ -127,19 +133,43 @@ class InputClient:
                 sock.sendall(encode(msg))
             except Exception as e:
                 print(f"[InputClient] send error: {e}")
-                # Connection dropped — release control back to the local PC and
-                # stay released (no auto-reconnect).
                 self._close_socket()
                 self._stop_listeners()
                 self._capturing = False
+                self.on_status_change("error")
+                # Try to reconnect in background
                 with self._lock:
-                    self._target = None
-                self.on_status_change("disconnected")
-                break  # exit sender thread
+                    target = self._target
+                if target:
+                    threading.Thread(
+                        target=self._reconnect,
+                        args=target,
+                        daemon=True,
+                    ).start()
+                break # exit thread on error, reconnect loop will spawn a new one
 
     def _send(self, msg: dict):
         # Non-blocking push to queue, extremely fast, prevents Windows hook timeouts
         self._send_queue.put_nowait(msg)
+
+    def _reconnect(self, ip: str, port: int):
+        time.sleep(self.RECONNECT_DELAY)
+        with self._lock:
+            if self._target != (ip, port):
+                return  # target changed, abort
+        self._do_connect(ip, port)
+        if self.is_connected():
+            if not self._capturing:
+                self._start_listeners()
+        else:
+            with self._lock:
+                target = self._target
+            if target == (ip, port):
+                threading.Thread(
+                    target=self._reconnect,
+                    args=(ip, port),
+                    daemon=True,
+                ).start()
 
     # ------------------------------------------------------------------
     # pynput listeners
