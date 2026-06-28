@@ -7,7 +7,7 @@ pip install -r requirements.txt
 pip install pyinstaller
 
 echo Building executable...
-pyinstaller ^
+python -m PyInstaller ^
     --onefile ^
     --windowed ^
     --name cross_device_hid ^
