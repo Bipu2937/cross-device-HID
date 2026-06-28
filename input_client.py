@@ -64,9 +64,13 @@ class InputClient:
         """Stop forwarding and release listeners to return control to local PC."""
         with self._lock:
             self._target = None
+        # Reset capturing FIRST and unconditionally.  If this were left until
+        # after _stop_listeners() and that call raised, _capturing would stay
+        # True and the next connect() would skip _start_listeners(), silently
+        # breaking forwarding until an app restart.
+        self._capturing = False
         self._close_socket()
         self._stop_listeners()
-        self._capturing = False
         self.on_status_change("disconnected")
 
     def stop(self):
@@ -156,9 +160,12 @@ class InputClient:
                 if msg.get("type") == "disconnect":
                     print("[InputClient] Controlled device ended the session. "
                           "Releasing control (no reconnect).")
-                    # disconnect() clears self._target, so the pending reconnect
-                    # check in _reconnect()/_sender_loop sees no target and bails.
-                    self.disconnect()
+                    # Run teardown on its own thread (same pattern as the escape
+                    # combo) so we never stop the suppression hook from within
+                    # this reader thread.  disconnect() clears self._target, so
+                    # the pending reconnect check in _reconnect()/_sender_loop
+                    # sees no target and bails.
+                    threading.Thread(target=self.disconnect, daemon=True).start()
                     return
 
     def _sender_loop(self):
@@ -242,12 +249,14 @@ class InputClient:
         self._keyboard_listener.start()
 
     def _stop_listeners(self):
-        if self._mouse_listener:
-            self._mouse_listener.stop()
-            self._mouse_listener = None
-        if self._keyboard_listener:
-            self._keyboard_listener.stop()
-            self._keyboard_listener = None
+        for attr in ("_mouse_listener", "_keyboard_listener"):
+            listener = getattr(self, attr)
+            if listener:
+                try:
+                    listener.stop()
+                except Exception as e:
+                    print(f"[InputClient] error stopping {attr}: {e}")
+                setattr(self, attr, None)
 
     def _on_move(self, x, y):
         # While we are controlling a remote device the local cursor is held in
