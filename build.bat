@@ -4,7 +4,8 @@ REM Requirements: pip install pyinstaller pynput pystray Pillow
 
 echo Stopping any running instance...
 taskkill /IM cross_device_hid.exe /F >nul 2>&1
-timeout /t 1 /nobreak >nul
+timeout /t 2 /nobreak >nul
+if exist dist\cross_device_hid.exe del /F /Q dist\cross_device_hid.exe >nul 2>&1
 
 echo Installing dependencies...
 pip install -r requirements.txt
