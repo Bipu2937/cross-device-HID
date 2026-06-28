@@ -2,6 +2,10 @@
 REM Build cross_device_hid.exe as a single-file Windows executable
 REM Requirements: pip install pyinstaller pynput pystray Pillow
 
+echo Stopping any running instance...
+taskkill /IM cross_device_hid.exe /F >nul 2>&1
+timeout /t 1 /nobreak >nul
+
 echo Installing dependencies...
 pip install -r requirements.txt
 pip install pyinstaller

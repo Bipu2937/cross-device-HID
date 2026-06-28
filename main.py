@@ -17,9 +17,15 @@ from discovery import DiscoveryService
 from input_server import InputServer
 from input_client import InputClient
 from tray_icon import TrayApp
+from firewall import ensure_firewall_rules
 
 
 def main():
+    # ------------------------------------------------------------------ #
+    # 0. Firewall — auto-add rules on first run (one-time UAC prompt)    #
+    # ------------------------------------------------------------------ #
+    ensure_firewall_rules()
+
     # ------------------------------------------------------------------ #
     # 1. Input server — accept remote control of THIS machine             #
     # ------------------------------------------------------------------ #
