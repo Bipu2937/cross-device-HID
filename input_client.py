@@ -37,9 +37,6 @@ class InputClient:
         # Used to convert absolute cursor reports into clean per-step deltas.
         self._mouse_ctrl = MouseController()
         self._anchor: tuple[int, int] | None = None
-        # Diagnostics
-        self._sent_count = 0
-        self._move_log_count = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -144,12 +141,9 @@ class InputClient:
                 
             try:
                 sock.sendall(encode(msg))
-                self._sent_count += 1
-                if self._sent_count <= 20 or self._sent_count % 100 == 0:
-                    log(f"CLIENT sent #{self._sent_count}: {msg}")
             except Exception as e:
                 print(f"[InputClient] send error: {e}")
-                log(f"CLIENT send ERROR after {self._sent_count} msgs: {e!r}")
+                log(f"CLIENT send ERROR: {e!r}")
                 # Connection dropped — release control back to the local PC and
                 # stay released (no auto-reconnect).
                 self._close_socket()
@@ -175,7 +169,6 @@ class InputClient:
         self._ctrl_pressed = False
         self._alt_pressed = False
         self._anchor = None
-        self._move_log_count = 0
         log("CLIENT listeners starting (suppress=True)")
 
         self._mouse_listener = mouse.Listener(
@@ -211,7 +204,6 @@ class InputClient:
         # forwarded).
         if self._anchor is None:
             self._anchor = (x, y)
-            log(f"MOVE anchor set to ({x},{y})")
             return
 
         ax, ay = self._anchor
@@ -225,20 +217,12 @@ class InputClient:
             self._send({"type": "mouse_move_rel", "dx": dx, "dy": dy})
 
         # Re-center so the next physical movement starts from a known point.
-        warp_ok = True
         try:
             self._mouse_ctrl.position = (ax, ay)
-        except Exception as e:
+        except Exception:
             # If we cannot warp the cursor, fall back to tracking the last
             # reported position so deltas stay per-step rather than cumulative.
-            warp_ok = False
             self._anchor = (x, y)
-            log(f"MOVE warp FAILED: {e!r}")
-
-        self._move_log_count += 1
-        if self._move_log_count <= 20:
-            log(f"MOVE raw=({x},{y}) anchor=({ax},{ay}) dx={dx} dy={dy} "
-                f"warp_ok={warp_ok}")
 
     def _on_click(self, x, y, button, pressed):
         self._send({
