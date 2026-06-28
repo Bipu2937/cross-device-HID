@@ -10,7 +10,7 @@ import time
 from pynput import mouse, keyboard
 from pynput.mouse import Controller as MouseController
 
-from protocol import CONTROL_PORT, BUFFER_SIZE, encode
+from protocol import CONTROL_PORT, encode
 
 
 import queue
@@ -64,13 +64,9 @@ class InputClient:
         """Stop forwarding and release listeners to return control to local PC."""
         with self._lock:
             self._target = None
-        # Reset capturing FIRST and unconditionally.  If this were left until
-        # after _stop_listeners() and that call raised, _capturing would stay
-        # True and the next connect() would skip _start_listeners(), silently
-        # breaking forwarding until an app restart.
-        self._capturing = False
         self._close_socket()
         self._stop_listeners()
+        self._capturing = False
         self.on_status_change("disconnected")
 
     def stop(self):
@@ -97,7 +93,6 @@ class InputClient:
             with self._lock:
                 self._sock = s
             self._start_sender_thread()
-            self._start_reader_thread(s)
             self.on_status_change(f"connected:{ip}")
             print(f"[InputClient] Connected to {ip}:{port}")
         except Exception as e:
@@ -122,51 +117,6 @@ class InputClient:
                 break
         self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
         self._sender_thread.start()
-
-    def _start_reader_thread(self, sock: socket.socket):
-        threading.Thread(
-            target=self._reader_loop, args=(sock,), daemon=True
-        ).start()
-
-    def _reader_loop(self, sock: socket.socket):
-        """
-        Listen for control messages coming back from the controlled device.
-        Right now the only one is {"type": "disconnect"}, which the controlled
-        PC sends when it intentionally ends the session.  We must honour it by
-        releasing control *without* auto-reconnecting.
-        """
-        buf = ""
-        while True:
-            # Stop if this is no longer the active socket (we reconnected/closed).
-            with self._lock:
-                if self._sock is not sock:
-                    return
-            try:
-                data = sock.recv(BUFFER_SIZE)
-            except OSError:
-                return
-            if not data:
-                return  # plain EOF — let the sender path decide about reconnect
-            buf += data.decode("utf-8", "ignore")
-            while "\n" in buf:
-                line, buf = buf.split("\n", 1)
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                except Exception:
-                    continue
-                if msg.get("type") == "disconnect":
-                    print("[InputClient] Controlled device ended the session. "
-                          "Releasing control (no reconnect).")
-                    # Run teardown on its own thread (same pattern as the escape
-                    # combo) so we never stop the suppression hook from within
-                    # this reader thread.  disconnect() clears self._target, so
-                    # the pending reconnect check in _reconnect()/_sender_loop
-                    # sees no target and bails.
-                    threading.Thread(target=self.disconnect, daemon=True).start()
-                    return
 
     def _sender_loop(self):
         while True:
@@ -249,14 +199,12 @@ class InputClient:
         self._keyboard_listener.start()
 
     def _stop_listeners(self):
-        for attr in ("_mouse_listener", "_keyboard_listener"):
-            listener = getattr(self, attr)
-            if listener:
-                try:
-                    listener.stop()
-                except Exception as e:
-                    print(f"[InputClient] error stopping {attr}: {e}")
-                setattr(self, attr, None)
+        if self._mouse_listener:
+            self._mouse_listener.stop()
+            self._mouse_listener = None
+        if self._keyboard_listener:
+            self._keyboard_listener.stop()
+            self._keyboard_listener = None
 
     def _on_move(self, x, y):
         # While we are controlling a remote device the local cursor is held in
