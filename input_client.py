@@ -10,7 +10,7 @@ import time
 from pynput import mouse, keyboard
 from pynput.mouse import Controller as MouseController
 
-from protocol import CONTROL_PORT, encode
+from protocol import CONTROL_PORT, BUFFER_SIZE, encode
 
 
 import queue
@@ -93,6 +93,7 @@ class InputClient:
             with self._lock:
                 self._sock = s
             self._start_sender_thread()
+            self._start_reader_thread(s)
             self.on_status_change(f"connected:{ip}")
             print(f"[InputClient] Connected to {ip}:{port}")
         except Exception as e:
@@ -117,6 +118,48 @@ class InputClient:
                 break
         self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
         self._sender_thread.start()
+
+    def _start_reader_thread(self, sock: socket.socket):
+        threading.Thread(
+            target=self._reader_loop, args=(sock,), daemon=True
+        ).start()
+
+    def _reader_loop(self, sock: socket.socket):
+        """
+        Listen for control messages coming back from the controlled device.
+        Right now the only one is {"type": "disconnect"}, which the controlled
+        PC sends when it intentionally ends the session.  We must honour it by
+        releasing control *without* auto-reconnecting.
+        """
+        buf = ""
+        while True:
+            # Stop if this is no longer the active socket (we reconnected/closed).
+            with self._lock:
+                if self._sock is not sock:
+                    return
+            try:
+                data = sock.recv(BUFFER_SIZE)
+            except OSError:
+                return
+            if not data:
+                return  # plain EOF — let the sender path decide about reconnect
+            buf += data.decode("utf-8", "ignore")
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    continue
+                if msg.get("type") == "disconnect":
+                    print("[InputClient] Controlled device ended the session. "
+                          "Releasing control (no reconnect).")
+                    # disconnect() clears self._target, so the pending reconnect
+                    # check in _reconnect()/_sender_loop sees no target and bails.
+                    self.disconnect()
+                    return
 
     def _sender_loop(self):
         while True:
