@@ -15,6 +15,8 @@ from PIL import Image, ImageDraw
 import pystray
 from pystray import MenuItem as Item, Menu
 
+from debuglog import log
+
 
 def _make_icon_image(color: str = "#4A9EFF", size: int = 64) -> Image.Image:
     """Draw a simple rounded-square icon with the given colour."""
@@ -82,6 +84,15 @@ class TrayApp:
         self._refresh_menu()
 
     def set_status(self, status: str):
+        # The tray must never raise into the caller: set_status runs from the
+        # connection thread, and a pystray failure here previously bubbled up
+        # and aborted an otherwise-successful connect.
+        try:
+            self._set_status_impl(status)
+        except Exception as e:
+            log(f"TRAY set_status({status!r}) raised (ignored): {e!r}")
+
+    def _set_status_impl(self, status: str):
         if status.startswith("connected:"):
             ip = status.split(":", 1)[1]
             self._active_ip = ip
@@ -146,12 +157,12 @@ class TrayApp:
         return self._status
 
     def _refresh_menu(self):
-        self._icon.menu = self._build_menu()
-        # pystray needs update() on Windows to repaint
         try:
+            self._icon.menu = self._build_menu()
+            # pystray needs update() on Windows to repaint
             self._icon.update_menu()
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"TRAY _refresh_menu raised (ignored): {e!r}")
 
     # ------------------------------------------------------------------
     # Handlers

@@ -65,7 +65,7 @@ class InputClient:
         self._close_socket()
         self._stop_listeners()
         self._capturing = False
-        self.on_status_change("disconnected")
+        self._safe_status("disconnected")
 
     def stop(self):
         """Fully shut down — stop capturing and close socket."""
@@ -75,6 +75,19 @@ class InputClient:
     def is_connected(self) -> bool:
         with self._lock:
             return self._sock is not None
+
+    def _safe_status(self, status: str):
+        """
+        Notify the UI of a status change WITHOUT ever letting a UI error
+        propagate into the connection logic. A throwing status callback
+        (e.g. a tray-menu rebuild failing) must not abort an otherwise
+        successful connect, or input would be captured but never streamed.
+        """
+        try:
+            self.on_status_change(status)
+        except Exception as e:
+            print(f"[InputClient] status callback error ({status}): {e}")
+            log(f"CLIENT status callback raised for {status!r}: {e!r}")
 
     # ------------------------------------------------------------------
     # Internal
@@ -91,13 +104,13 @@ class InputClient:
             with self._lock:
                 self._sock = s
             self._start_sender_thread()
-            self.on_status_change(f"connected:{ip}")
             print(f"[InputClient] Connected to {ip}:{port}")
             log(f"CLIENT connected to {ip}:{port} OK")
+            self._safe_status(f"connected:{ip}")
         except Exception as e:
             print(f"[InputClient] Connect failed: {e}")
             log(f"CLIENT connect FAILED to {ip}:{port}: {e!r}")
-            self.on_status_change("error")
+            self._safe_status("error")
 
     def _close_socket(self):
         with self._lock:
@@ -144,7 +157,7 @@ class InputClient:
                 self._capturing = False
                 with self._lock:
                     self._target = None
-                self.on_status_change("disconnected")
+                self._safe_status("disconnected")
                 break  # exit sender thread
 
     def _send(self, msg: dict):
