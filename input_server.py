@@ -10,6 +10,7 @@ from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
 
 from protocol import CONTROL_PORT, BUFFER_SIZE
+from debuglog import log
 
 # Map string names -> pynput Button
 _BUTTON_MAP = {
@@ -47,6 +48,7 @@ class InputServer:
         self.on_status_change = on_status_change or (lambda status: None)
         self._active_conn = None
         self._server_lock = threading.Lock()
+        self._dispatch_log_count = 0
 
     def start(self):
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -98,7 +100,9 @@ class InputServer:
             self._active_conn = conn
         conn.settimeout(5.0)
         buf = ""
+        recv_count = 0
         self.on_status_change(f"controlled_by:{addr[0]}")
+        log(f"SERVER controller connected from {addr}")
         try:
             while not self._stop.is_set():
                 try:
@@ -112,6 +116,9 @@ class InputServer:
                     line, buf = buf.split("\n", 1)
                     line = line.strip()
                     if line:
+                        recv_count += 1
+                        if recv_count <= 20 or recv_count % 100 == 0:
+                            log(f"SERVER recv #{recv_count}: {line}")
                         self._dispatch(json.loads(line))
         except Exception as e:
             print(f"[InputServer] Client {addr} error: {e}")
@@ -129,7 +136,12 @@ class InputServer:
             if t == "mouse_move":
                 self._mouse.position = (msg["x"], msg["y"])
             elif t == "mouse_move_rel":
+                before = self._mouse.position
                 self._mouse.move(msg["dx"], msg["dy"])
+                if self._dispatch_log_count < 20:
+                    self._dispatch_log_count += 1
+                    log(f"SERVER move dx={msg['dx']} dy={msg['dy']} "
+                        f"pos {before} -> {self._mouse.position}")
             elif t == "mouse_click":
                 btn = _BUTTON_MAP.get(msg.get("button", "left"), Button.left)
                 if msg.get("pressed"):
@@ -146,3 +158,4 @@ class InputServer:
                     self._keyboard.release(key)
         except Exception as e:
             print(f"[InputServer] dispatch error ({t}): {e}")
+            log(f"SERVER dispatch ERROR ({t}): {e!r} msg={msg}")

@@ -10,6 +10,7 @@ from input_client import InputClient
 from tray_icon import TrayApp
 from firewall import ensure_firewall_rules
 from dashboard import DashboardApp
+from debuglog import reset as _log_reset, log as _log
 
 CONFIG_FILE = "config.json"
 
@@ -53,6 +54,9 @@ def main():
     # Get local details
     local_ip = _get_local_ip()
     hostname = _get_hostname()
+
+    _log_reset(f"app start host={hostname} ip={local_ip} "
+               f"ctrl_port={control_port} disc_port={discovery_port}")
 
     # Forward references
     tray: TrayApp | None = None
