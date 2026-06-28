@@ -41,21 +41,30 @@ class InputClient:
         with self._lock:
             self._target = (ip, port)
         self._do_connect(ip, port)
-        if not self._capturing:
-            self._start_listeners()
+        if self.is_connected():
+            if not self._capturing:
+                self._start_listeners()
+        else:
+            # Failed to connect, but user asked to connect, so try in background
+            threading.Thread(
+                target=self._reconnect,
+                args=(ip, port),
+                daemon=True,
+            ).start()
 
     def disconnect(self):
-        """Stop forwarding; keep listeners running (so we can reconnect)."""
+        """Stop forwarding and release listeners to return control to local PC."""
         with self._lock:
             self._target = None
         self._close_socket()
+        self._stop_listeners()
+        self._capturing = False
         self.on_status_change("disconnected")
 
     def stop(self):
         """Fully shut down — stop capturing and close socket."""
         self._capturing = False
         self.disconnect()
-        self._stop_listeners()
 
     def is_connected(self) -> bool:
         with self._lock:
@@ -99,6 +108,8 @@ class InputClient:
         except Exception as e:
             print(f"[InputClient] send error: {e}")
             self._close_socket()
+            self._stop_listeners()
+            self._capturing = False
             self.on_status_change("error")
             # Try to reconnect in background
             with self._lock:
@@ -116,15 +127,31 @@ class InputClient:
             if self._target != (ip, port):
                 return  # target changed, abort
         self._do_connect(ip, port)
+        if self.is_connected():
+            if not self._capturing:
+                self._start_listeners()
+        else:
+            with self._lock:
+                target = self._target
+            if target == (ip, port):
+                threading.Thread(
+                    target=self._reconnect,
+                    args=(ip, port),
+                    daemon=True,
+                ).start()
 
     # ------------------------------------------------------------------
     # pynput listeners
     # ------------------------------------------------------------------
 
     def _start_listeners(self):
+        if self._capturing:
+            return
         self._capturing = True
         self._ctrl_pressed = False
         self._alt_pressed = False
+        
+        self._mouse_ctrl = mouse.Controller()
 
         self._mouse_listener = mouse.Listener(
             on_move=self._on_move,
@@ -150,7 +177,14 @@ class InputClient:
             self._keyboard_listener = None
 
     def _on_move(self, x, y):
-        self._send({"type": "mouse_move", "x": x, "y": y})
+        # We use relative mouse movements to prevent the cursor from getting stuck.
+        # Since suppress=True freezes the actual cursor, x and y are the hardware delta applied 
+        # to the constant cursor position.
+        cx, cy = self._mouse_ctrl.position
+        dx = x - cx
+        dy = y - cy
+        if dx != 0 or dy != 0:
+            self._send({"type": "mouse_move_rel", "dx": dx, "dy": dy})
 
     def _on_click(self, x, y, button, pressed):
         self._send({

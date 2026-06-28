@@ -128,6 +128,8 @@ class InputServer:
         try:
             if t == "mouse_move":
                 self._mouse.position = (msg["x"], msg["y"])
+            elif t == "mouse_move_rel":
+                self._mouse.move(msg["dx"], msg["dy"])
             elif t == "mouse_click":
                 btn = _BUTTON_MAP.get(msg.get("button", "left"), Button.left)
                 if msg.get("pressed"):
