@@ -37,13 +37,14 @@ def _resolve_key(key_str: str):
 class InputServer:
     """Listens for one controller at a time and simulates its input locally."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = CONTROL_PORT):
+    def __init__(self, host: str = "0.0.0.0", port: int = CONTROL_PORT, on_status_change=None):
         self.host = host
         self.port = port
         self._mouse = MouseController()
         self._keyboard = KeyboardController()
         self._stop = threading.Event()
         self._server_sock = None
+        self.on_status_change = on_status_change or (lambda status: None)
 
     def start(self):
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -81,6 +82,7 @@ class InputServer:
     def _handle_client(self, conn: socket.socket, addr):
         conn.settimeout(5.0)
         buf = ""
+        self.on_status_change(f"controlled_by:{addr[0]}")
         try:
             while not self._stop.is_set():
                 try:
@@ -100,6 +102,7 @@ class InputServer:
         finally:
             conn.close()
             print(f"[InputServer] Controller {addr} disconnected")
+            self.on_status_change("idle")
 
     def _dispatch(self, msg: dict):
         t = msg.get("type")

@@ -48,10 +48,12 @@ class TrayApp:
         on_connect: Callable[[dict], None],
         on_disconnect: Callable[[], None],
         on_quit: Callable[[], None],
+        on_show_dashboard: Callable[[], None],
     ):
         self._on_connect = on_connect
         self._on_disconnect = on_disconnect
         self._on_quit = on_quit
+        self._on_show_dashboard = on_show_dashboard
 
         self._devices: list[dict] = []
         self._active_ip: str | None = None
@@ -85,7 +87,12 @@ class TrayApp:
             self._active_ip = ip
             self._status = f"Controlling  {self._name_for(ip)}"
             self._icon.icon = _ICON_ACTIVE
-        elif status == "disconnected":
+        elif status.startswith("controlled_by:"):
+            ip = status.split(":", 1)[1]
+            self._active_ip = None
+            self._status = f"Controlled by {ip}"
+            self._icon.icon = _ICON_ERROR
+        elif status == "disconnected" or status == "idle":
             self._active_ip = None
             self._status = "Idle — no device selected"
             self._icon.icon = _ICON_IDLE
@@ -101,6 +108,8 @@ class TrayApp:
 
     def _build_menu(self) -> Menu:
         items = [
+            Item("Show Dashboard", self._handle_show_dashboard, default=True),
+            Menu.SEPARATOR,
             Item(self._status_label, None, enabled=False),
             Menu.SEPARATOR,
         ]
@@ -147,6 +156,9 @@ class TrayApp:
     # ------------------------------------------------------------------
     # Handlers
     # ------------------------------------------------------------------
+
+    def _handle_show_dashboard(self, icon=None, item=None):
+        self._on_show_dashboard()
 
     def _handle_disconnect(self, icon=None, item=None):
         self._on_disconnect()
