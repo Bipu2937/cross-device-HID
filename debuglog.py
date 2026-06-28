@@ -2,17 +2,27 @@
 Tiny append-only file logger for diagnosing the input-forwarding path.
 
 The packaged app is windowed (no console), so print() output is invisible.
-This writes timestamped lines to `cross_hid_log.txt` next to the executable
-(falling back to the current working directory) so issues can be inspected
-after the fact.
+When enabled, this writes timestamped lines to `cross_hid_log.txt` next to
+the executable (falling back to the current working directory).
+
+Logging is OFF by default so it never adds any overhead to the normal
+forwarding path. Enable it only when diagnosing an issue by setting the
+environment variable CROSS_HID_DEBUG=1 before launching the app.
 """
 import os
 import sys
 import threading
 import time
 
+# Opt-in only: anything other than unset/""/"0"/"false" turns logging on.
+_ENABLED = os.environ.get("CROSS_HID_DEBUG", "").strip().lower() not in ("", "0", "false", "no")
+
 _LOCK = threading.Lock()
 _PATH = None
+
+
+def enabled() -> bool:
+    return _ENABLED
 
 
 def _resolve_path() -> str:
@@ -32,6 +42,8 @@ def _resolve_path() -> str:
 
 
 def log(msg: str) -> None:
+    if not _ENABLED:
+        return
     try:
         line = f"{time.strftime('%H:%M:%S')} [{threading.current_thread().name}] {msg}\n"
         with _LOCK:
@@ -43,6 +55,8 @@ def log(msg: str) -> None:
 
 def reset(header: str = "") -> None:
     """Start a fresh log section (called on app start)."""
+    if not _ENABLED:
+        return
     try:
         with _LOCK:
             with open(_resolve_path(), "a", encoding="utf-8") as f:

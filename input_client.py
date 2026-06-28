@@ -95,6 +95,9 @@ class InputClient:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # Keep the idle connection alive so brief Wi-Fi lulls don't get the
+            # link torn down by the OS (the 10053 abort seen in the field).
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             s.settimeout(3.0)
             s.connect((ip, port))
             s.settimeout(None)
